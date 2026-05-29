@@ -227,8 +227,29 @@ var UI = (function(){
     });
   }
 
+  // Compress image before storing
+  function compressImage(file, maxW, callback){
+    maxW = maxW || 800;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var img = new Image();
+      img.onload = function() {
+        var w = img.width, h = img.height;
+        if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+        var canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        callback(canvas.toDataURL('image/jpeg', 0.7));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
   // ===== Custom Question Bank =====
-  var bankMode='browse'; // browse | add | study
+  var bankMode='browse';
+  var pendingImage = null;
 
   function renderCustomBank(container){
     DB.getAllCustomQuestions().then(function(questions){
@@ -237,8 +258,10 @@ var UI = (function(){
         listHtml='<div style="text-align:center;padding:30px;color:var(--text-muted)">还没有自定义题目，点击下方按钮添加</div>';
       } else {
         questions.forEach(function(q,i){
+          var imgHtml = q.image ? '<div style="margin:8px 0"><img src="'+q.image+'" style="max-width:100%;border-radius:var(--radius-sm);cursor:pointer" onclick="var m=document.getElementById(\'imgModal\');m.style.display=\'flex\';m.querySelector(\'img\').src=this.src"></div>' : '';
           listHtml+='<div class="exercise-card">'+
             '<div class="q"><strong>'+(i+1)+'.</strong> <span style="color:var(--accent-orange);font-size:11px">['+(q.subject||'未分类')+']</span> '+q.question+'</div>'+
+            imgHtml+
             '<button class="btn-answer" onclick="var d=document.getElementById(\'bans'+i+'\');d.classList.toggle(\'show\');">查看答案</button>'+
             '<button class="btn-answer" style="color:var(--accent-red);margin-left:4px" onclick="if(confirm(\'删除这道题？\')){DB.deleteCustomQuestion('+q.id+').then(function(){UI.refreshBank();})}">删除</button>'+
             '<div class="answer-reveal" id="bans'+i+'"><strong>答案:</strong> '+q.answer+(q.explanation?'<br><strong>解析:</strong> '+q.explanation:'')+'</div></div>';
@@ -247,17 +270,20 @@ var UI = (function(){
 
       container.innerHTML='<div class="page active">'+
         '<div style="display:flex;gap:8px;margin-bottom:16px">'+
-          '<button class="study-nav-btn active" id="btnBankBrowse">浏览</button>'+
-          '<button class="study-nav-btn" id="btnBankAdd">添加题目</button>'+
-          '<button class="study-nav-btn" id="btnBankBatch">批量导入</button>'+
+          '<button class="study-nav-btn active" id="btnBankBrowse">浏览 ('+questions.length+')</button>'+
+          '<button class="study-nav-btn" id="btnBankAdd">➕ 添加</button>'+
+          '<button class="study-nav-btn" id="btnBankBatch">📥 批量导入</button>'+
         '</div>'+
         '<div id="bankContent">'+listHtml+'</div>'+
         '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;text-align:center">共 '+questions.length+' 道自定义题目</div>'+
+        // Image zoom modal
+        '<div id="imgModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.9);z-index:200;align-items:center;justify-content:center;flex-direction:column" onclick="this.style.display=\'none\'">'+
+          '<img src="" style="max-width:95%;max-height:85%;object-fit:contain">'+
+          '<span style="color:#fff;margin-top:12px;font-size:12px">点击任意处关闭</span>'+
+        '</div>'+
       '</div>';
 
-      document.getElementById('btnBankBrowse').addEventListener('click',function(){
-        document.querySelectorAll('#bankContent').forEach(function(e){e.style.display='block';});
-      });
+      document.getElementById('btnBankBrowse').addEventListener('click',function(){refreshBank();});
       document.getElementById('btnBankAdd').addEventListener('click',function(){renderAddForm();});
       document.getElementById('btnBankBatch').addEventListener('click',function(){renderBatchImport();});
     });
@@ -266,9 +292,17 @@ var UI = (function(){
   function renderAddForm(editQ){
     var isEdit=!!editQ;
     container=document.getElementById('bankContent');
+    var existingImg = editQ ? editQ.image : null;
+    var imgPreview = existingImg ? '<div style="margin:8px 0"><img src="'+existingImg+'" style="max-width:200px;border-radius:var(--radius-sm)"><br><span style="font-size:11px;color:var(--text-secondary)">已有图片，重新上传将替换</span></div>' : '';
+    if (pendingImage && !isEdit) { imgPreview = '<div style="margin:8px 0"><img src="'+pendingImage+'" style="max-width:200px;border-radius:var(--radius-sm)"><br><span style="font-size:11px;color:var(--accent-green)">照片已就绪</span></div>'; }
     container.innerHTML='<div style="background:var(--bg-card);border-radius:var(--radius);padding:16px">'+
       '<h3 style="margin-bottom:12px">'+(isEdit?'编辑题目':'添加新题目')+'</h3>'+
       '<input id="qSubject" placeholder="分类（如: 浮力、压强）" value="'+(editQ?editQ.subject:'')+'" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px">'+
+      '<div style="margin-bottom:8px">'+
+        '<input type="file" id="qImageInput" accept="image/*" capture="environment" style="display:none" onchange="UI.handleImagePick(this)">'+
+        '<button class="btn-answer" style="width:100%;text-align:center;padding:10px" onclick="document.getElementById(\'qImageInput\').click()">📷 拍照或选择图片</button>'+
+      '</div>'+
+      imgPreview+
       '<textarea id="qQuestion" placeholder="题目内容" rows="3" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.question:'')+'</textarea>'+
       '<textarea id="qAnswer" placeholder="答案" rows="2" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.answer:'')+'</textarea>'+
       '<textarea id="qExplanation" placeholder="解析（选填）" rows="3" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.explanation||'':'')+'</textarea>'+
@@ -278,17 +312,28 @@ var UI = (function(){
       '</div></div>';
 
     document.getElementById('btnSaveQ').addEventListener('click',function(){
+      var img = pendingImage || (editQ?editQ.image:null) || null;
       var q={
         subject:document.getElementById('qSubject').value||'未分类',
         question:document.getElementById('qQuestion').value.trim(),
         answer:document.getElementById('qAnswer').value.trim(),
-        explanation:document.getElementById('qExplanation').value.trim()
+        explanation:document.getElementById('qExplanation').value.trim(),
+        image: img
       };
       if(!q.question||!q.answer){alert('题目和答案为必填');return;}
-      if(isEdit){q.id=editQ.id;DB.updateCustomQuestion(q).then(function(){refreshBank();});}
-      else{DB.addCustomQuestion(q).then(function(){refreshBank();});}
+      var savePromise = isEdit ? DB.updateCustomQuestion(q) : DB.addCustomQuestion(q);
+      savePromise.then(function(){pendingImage=null;refreshBank();});
     });
-    document.getElementById('btnCancelQ').addEventListener('click',function(){refreshBank();});
+    document.getElementById('btnCancelQ').addEventListener('click',function(){pendingImage=null;refreshBank();});
+  }
+
+  function handleImagePick(input){
+    var file = input.files[0];
+    if (!file) return;
+    compressImage(file, 800, function(dataUrl) {
+      pendingImage = dataUrl;
+      renderAddForm();
+    });
   }
 
   function renderBatchImport(){
@@ -344,5 +389,5 @@ var UI = (function(){
     renderCustomBank(main);
   }
 
-  return {showPage:showPage,markDone:markDone,refreshBank:refreshBank,renderAddForm:renderAddForm};
+  return {showPage:showPage,markDone:markDone,refreshBank:refreshBank,renderAddForm:renderAddForm,handleImagePick:handleImagePick};
 })();
