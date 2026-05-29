@@ -12,6 +12,7 @@ var UI = (function(){
       case 'study':hdr.textContent='今日学习';renderStudy(main,data);break;
       case 'formulas':hdr.textContent='公式手册';renderFormulas(main);break;
       case 'stats':hdr.textContent='学习统计';renderStats(main);break;
+      case 'bank':hdr.textContent='自定义题库';renderCustomBank(main);break;
     }
     document.querySelectorAll('.nav-btn').forEach(function(b){
       b.classList.toggle('active',b.dataset.page===name);
@@ -226,5 +227,122 @@ var UI = (function(){
     });
   }
 
-  return {showPage:showPage,markDone:markDone};
+  // ===== Custom Question Bank =====
+  var bankMode='browse'; // browse | add | study
+
+  function renderCustomBank(container){
+    DB.getAllCustomQuestions().then(function(questions){
+      var listHtml='';
+      if(questions.length===0){
+        listHtml='<div style="text-align:center;padding:30px;color:var(--text-muted)">还没有自定义题目，点击下方按钮添加</div>';
+      } else {
+        questions.forEach(function(q,i){
+          listHtml+='<div class="exercise-card">'+
+            '<div class="q"><strong>'+(i+1)+'.</strong> <span style="color:var(--accent-orange);font-size:11px">['+(q.subject||'未分类')+']</span> '+q.question+'</div>'+
+            '<button class="btn-answer" onclick="var d=document.getElementById(\'bans'+i+'\');d.classList.toggle(\'show\');">查看答案</button>'+
+            '<button class="btn-answer" style="color:var(--accent-red);margin-left:4px" onclick="if(confirm(\'删除这道题？\')){DB.deleteCustomQuestion('+q.id+').then(function(){UI.refreshBank();})}">删除</button>'+
+            '<div class="answer-reveal" id="bans'+i+'"><strong>答案:</strong> '+q.answer+(q.explanation?'<br><strong>解析:</strong> '+q.explanation:'')+'</div></div>';
+        });
+      }
+
+      container.innerHTML='<div class="page active">'+
+        '<div style="display:flex;gap:8px;margin-bottom:16px">'+
+          '<button class="study-nav-btn active" id="btnBankBrowse">浏览</button>'+
+          '<button class="study-nav-btn" id="btnBankAdd">添加题目</button>'+
+          '<button class="study-nav-btn" id="btnBankBatch">批量导入</button>'+
+        '</div>'+
+        '<div id="bankContent">'+listHtml+'</div>'+
+        '<div style="font-size:12px;color:var(--text-muted);margin-top:12px;text-align:center">共 '+questions.length+' 道自定义题目</div>'+
+      '</div>';
+
+      document.getElementById('btnBankBrowse').addEventListener('click',function(){
+        document.querySelectorAll('#bankContent').forEach(function(e){e.style.display='block';});
+      });
+      document.getElementById('btnBankAdd').addEventListener('click',function(){renderAddForm();});
+      document.getElementById('btnBankBatch').addEventListener('click',function(){renderBatchImport();});
+    });
+  }
+
+  function renderAddForm(editQ){
+    var isEdit=!!editQ;
+    container=document.getElementById('bankContent');
+    container.innerHTML='<div style="background:var(--bg-card);border-radius:var(--radius);padding:16px">'+
+      '<h3 style="margin-bottom:12px">'+(isEdit?'编辑题目':'添加新题目')+'</h3>'+
+      '<input id="qSubject" placeholder="分类（如: 浮力、压强）" value="'+(editQ?editQ.subject:'')+'" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px">'+
+      '<textarea id="qQuestion" placeholder="题目内容" rows="3" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.question:'')+'</textarea>'+
+      '<textarea id="qAnswer" placeholder="答案" rows="2" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.answer:'')+'</textarea>'+
+      '<textarea id="qExplanation" placeholder="解析（选填）" rows="3" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:14px;resize:vertical">'+(editQ?editQ.explanation||'':'')+'</textarea>'+
+      '<div style="display:flex;gap:8px">'+
+        '<button class="btn-start" style="flex:1" id="btnSaveQ">'+(isEdit?'保存修改':'添加')+'</button>'+
+        '<button class="btn-answer" style="flex:1;text-align:center" id="btnCancelQ">取消</button>'+
+      '</div></div>';
+
+    document.getElementById('btnSaveQ').addEventListener('click',function(){
+      var q={
+        subject:document.getElementById('qSubject').value||'未分类',
+        question:document.getElementById('qQuestion').value.trim(),
+        answer:document.getElementById('qAnswer').value.trim(),
+        explanation:document.getElementById('qExplanation').value.trim()
+      };
+      if(!q.question||!q.answer){alert('题目和答案为必填');return;}
+      if(isEdit){q.id=editQ.id;DB.updateCustomQuestion(q).then(function(){refreshBank();});}
+      else{DB.addCustomQuestion(q).then(function(){refreshBank();});}
+    });
+    document.getElementById('btnCancelQ').addEventListener('click',function(){refreshBank();});
+  }
+
+  function renderBatchImport(){
+    container=document.getElementById('bankContent');
+    container.innerHTML='<div style="background:var(--bg-card);border-radius:var(--radius);padding:16px">'+
+      '<h3 style="margin-bottom:8px">批量导入题目</h3>'+
+      '<p style="font-size:12px;color:var(--text-secondary);margin-bottom:12px">每道题格式: 每道题之间用空行分隔。每题第一行为"分类:题目"，第二行以"A:"开头为答案，第三行以"解析:"开头为解析（选填）。</p>'+
+      '<p style="font-size:11px;color:var(--accent-orange);margin-bottom:8px">示例:<br>浮力:一个铁块重10N放入水中后示数为6N，浮力多大？<br>A:4N<br>解析:称重法F浮=G-F示=10-6=4N</p>'+
+      '<textarea id="batchText" placeholder="粘贴题目..." rows="8" style="width:100%;padding:10px;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);border-radius:var(--radius-sm);margin-bottom:8px;font-size:13px;resize:vertical;font-family:monospace"></textarea>'+
+      '<button class="btn-start" id="btnBatchImport">解析并导入</button>'+
+      '<div id="batchResult" style="margin-top:8px;font-size:13px"></div></div>';
+
+    document.getElementById('btnBatchImport').addEventListener('click',function(){
+      var text=document.getElementById('batchText').value.trim();
+      if(!text){return;}
+      var blocks=text.split(/\n\n+/);
+      var imported=0;
+      var promises=[];
+      blocks.forEach(function(block){
+        var lines=block.trim().split('\n');
+        if(lines.length<2)return;
+        var firstLine=lines[0];
+        var subject='未分类';
+        var question=firstLine;
+        var colonIdx=firstLine.indexOf(':');
+        if(colonIdx>0 && colonIdx<15){
+          subject=firstLine.substring(0,colonIdx).trim();
+          question=firstLine.substring(colonIdx+1).trim();
+        }
+        var answer='',explanation='';
+        for(var i=1;i<lines.length;i++){
+          var l=lines[i].trim();
+          if(l.indexOf('A:')===0||l.indexOf('答案:')===0||l.indexOf('a:')===0) answer=l.substring(l.indexOf(':')+1).trim();
+          else if(l.indexOf('解析:')===0) explanation=l.substring(l.indexOf(':')+1).trim();
+          else if(!answer) answer=l;
+          else explanation+=l+'\n';
+        }
+        if(question&&answer){
+          promises.push(DB.addCustomQuestion({subject:subject,question:question,answer:answer,explanation:explanation.trim()}));
+          imported++;
+        }
+      });
+      Promise.all(promises).then(function(){
+        document.getElementById('batchResult').innerHTML='<span style="color:var(--accent-green)">成功导入 '+imported+' 道题目！</span>';
+        document.getElementById('batchText').value='';
+        setTimeout(function(){refreshBank();},1000);
+      });
+    });
+  }
+
+  function refreshBank(){
+    var main=document.getElementById('mainContent');
+    renderCustomBank(main);
+  }
+
+  return {showPage:showPage,markDone:markDone,refreshBank:refreshBank,renderAddForm:renderAddForm};
 })();

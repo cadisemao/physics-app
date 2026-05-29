@@ -1,6 +1,6 @@
 // IndexedDB — 学习进度存储
 var DB = (function(){
-  var DB_NAME='PhysicsApp',DB_VERSION=1,db=null;
+  var DB_NAME='PhysicsApp',DB_VERSION=2,db=null;
 
   function open(){
     return new Promise(function(resolve,reject){
@@ -13,6 +13,10 @@ var DB = (function(){
         }
         if(!d.objectStoreNames.contains('settings')){
           d.createObjectStore('settings',{keyPath:'key'});
+        }
+        if(!d.objectStoreNames.contains('customQuestions')){
+          var cq=d.createObjectStore('customQuestions',{keyPath:'id',autoIncrement:true});
+          cq.createIndex('subject','subject',{unique:false});
         }
       };
       req.onsuccess=function(e){db=e.target.result;resolve(db);};
@@ -101,12 +105,41 @@ var DB = (function(){
     });
   }
 
+  // Custom Questions
+  function addCustomQuestion(q){
+    return new Promise(function(resolve){
+      var store=getStore('customQuestions','readwrite');
+      q.createdAt=Date.now();
+      var req=store.add(q);
+      req.onsuccess=function(){resolve(req.result);};
+    });
+  }
+  function updateCustomQuestion(q){
+    return new Promise(function(resolve){
+      getStore('customQuestions','readwrite').put(q).onsuccess=function(){resolve();};
+    });
+  }
+  function deleteCustomQuestion(id){
+    return new Promise(function(resolve){
+      getStore('customQuestions','readwrite').delete(id).onsuccess=function(){resolve();};
+    });
+  }
+  function getAllCustomQuestions(){
+    return new Promise(function(resolve){
+      var r=[];getStore('customQuestions').openCursor().onsuccess=function(e){
+        var c=e.target.result;if(c){r.push(c.value);c.continue();}else resolve(r);
+      };
+    });
+  }
+
   function init(){return open();}
 
   return{
     init:init,getProgress:getProgress,saveProgress:saveProgress,
     getAllProgress:getAllProgress,getCompletedDays:getCompletedDays,
     markExerciseDone:markExerciseDone,markConceptRead:markConceptRead,
-    markDayComplete:markDayComplete,getSetting:getSetting,saveSetting:saveSetting
+    markDayComplete:markDayComplete,getSetting:getSetting,saveSetting:saveSetting,
+    addCustomQuestion:addCustomQuestion,updateCustomQuestion:updateCustomQuestion,
+    deleteCustomQuestion:deleteCustomQuestion,getAllCustomQuestions:getAllCustomQuestions
   };
 })();
